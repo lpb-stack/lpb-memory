@@ -93,6 +93,7 @@ function makeCtx(branch: any[] = [], overrides: Record<string, any> = {}) {
       notify: (msg: string, level: string) => {
         notifyCalls.push({ msg, level });
       },
+      setStatus: () => {},
     },
     ...overrides,
   };
@@ -842,7 +843,7 @@ describe("setupBackgroundReview", () => {
     const crashCtx = {
       sessionManager: { getBranch: () => { throw new Error("session expired"); } },
       signal: undefined as any,
-      ui: { notify: () => {} },
+      ui: { notify: () => {}, setStatus: () => {} },
     };
 
     const h = handlers["turn_end"];

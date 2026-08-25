@@ -21,13 +21,13 @@ describe("loadConfig", () => {
     assert.strictEqual(config.memoryCharLimit, 5000);
     assert.strictEqual(config.userCharLimit, 5000);
     assert.strictEqual(config.nudgeInterval, 10);
-    assert.strictEqual(config.reviewRecentMessages, 0);
+    assert.strictEqual(config.reviewRecentMessages, 50);
     assert.strictEqual(config.reviewEnabled, true);
-    assert.strictEqual(config.reviewTransport, "direct");
+    assert.strictEqual(config.reviewTransport, "subprocess");
     assert.strictEqual(config.flushOnCompact, true);
     assert.strictEqual(config.flushOnShutdown, true);
     assert.strictEqual(config.flushMinTurns, 6);
-    assert.strictEqual(config.flushRecentMessages, 0);
+    assert.strictEqual(config.flushRecentMessages, 30);
     assert.strictEqual(config.memoryOverflowStrategy, "auto-consolidate");
     assert.strictEqual(config.autoConsolidate, true);
     assert.strictEqual(config.failureInjectionEnabled, true);
@@ -84,8 +84,8 @@ describe("loadConfig", () => {
     assert.strictEqual(config.memoryMode, "policy-only");
     assert.strictEqual(config.memoryPolicyStyle, "full");
     assert.strictEqual(config.memoryCharLimit, 5000); // default
-    assert.strictEqual(config.reviewRecentMessages, 0);
-    assert.strictEqual(config.flushRecentMessages, 0);
+    assert.strictEqual(config.reviewRecentMessages, 50);
+    assert.strictEqual(config.flushRecentMessages, 30);
     assert.strictEqual(config.failureInjectionEnabled, true);
     assert.strictEqual(config.failureInjectionMaxAgeDays, 7);
     assert.strictEqual(config.failureInjectionMaxEntries, 5);
@@ -112,11 +112,11 @@ describe("loadConfig", () => {
   it("expands ~/ memoryDir into an absolute home path", () => {
     fs.mkdirSync(path.dirname(TEST_CONFIG_PATH), { recursive: true });
     fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({
-      memoryDir: "~/.pi/agent/pi-hermes-memory",
+      memoryDir: "~/.pi/agent/lpb-memory",
     }));
 
     const config = loadConfig(TEST_CONFIG_PATH);
-    assert.strictEqual(config.memoryDir, path.join(os.homedir(), ".pi", "agent", "pi-hermes-memory"));
+    assert.strictEqual(config.memoryDir, path.join(os.homedir(), ".pi", "agent", "lpb-memory"));
   });
 
   it("resolves relative memoryDir values against the agent root instead of cwd", () => {
@@ -187,8 +187,8 @@ describe("loadConfig", () => {
       flushRecentMessages: "5",
     }));
     const config = loadConfig(TEST_CONFIG_PATH);
-    assert.strictEqual(config.reviewRecentMessages, 0);
-    assert.strictEqual(config.flushRecentMessages, 0);
+    assert.strictEqual(config.reviewRecentMessages, 50);
+    assert.strictEqual(config.flushRecentMessages, 30);
   });
 
   it("handles empty file gracefully (falls back to defaults)", () => {
@@ -294,7 +294,7 @@ describe("loadConfig", () => {
 
     fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({ reviewTransport: "branch" }));
     const invalid = loadConfig(TEST_CONFIG_PATH);
-    assert.strictEqual(invalid.reviewTransport, "direct");
+    assert.strictEqual(invalid.reviewTransport, "subprocess");
   });
 
   it("accepts valid llmThinkingOverride values and ignores invalid ones", () => {

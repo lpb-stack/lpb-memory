@@ -16,7 +16,7 @@ import { DatabaseManager } from "../store/db.js";
 import type { ConfigOrProvider, MemoryConfig } from "../types.js";
 import { resolveConfig } from "../types.js";
 import { applyRecentMessageLimit, collectMessageParts } from "./message-parts.js";
-import { execChildPrompt } from "./pi-child-process.js";
+import { execChildPrompt, type PiExecResult } from "./pi-child-process.js";
 import { runDirectMemoryCompletion, usesDirectTransport, type DirectReviewResult } from "./review-memory-ops.js";
 
 export interface BackgroundReviewOptions {
@@ -131,7 +131,7 @@ async function runSubprocessReview(
   prompt: string,
   config: MemoryConfig,
   execChild: typeof execChildPrompt,
-): Promise<{ code: number; stdout?: string }> {
+): Promise<PiExecResult> {
   // Disable thinking during review — the review prompt is a mechanical
   // "extract durable facts" task. Thinking wastes ~15-20k tokens per
   // operation and contributes to context overflow when the prompt is large.

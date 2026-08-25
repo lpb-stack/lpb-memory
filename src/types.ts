@@ -1,5 +1,5 @@
 /**
- * Shared TypeScript types for the Hermes Memory extension.
+ * Shared TypeScript types for the lpb-memory extension.
  */
 
 import type { TextContent } from "@earendil-works/pi-ai";

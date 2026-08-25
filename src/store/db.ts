@@ -374,7 +374,7 @@ export class DatabaseManager {
   }
 
   private recoverDatabaseFile(cause: unknown, verify: () => void): DatabaseRecoveryResult {
-    const coordinator = AtomicLockCoordinator.shared(path.join(path.dirname(this.dbPath), '.pi-hermes-locks.sqlite'));
+    const coordinator = AtomicLockCoordinator.shared(path.join(path.dirname(this.dbPath), '.lpb-memory-locks.sqlite'));
     const lockKey = `recovery:${this.dbPath}`;
     const deadline = Date.now() + Math.max(0, this.recoveryOptions.recoveryLockWaitMs);
 
@@ -913,8 +913,10 @@ export class DatabaseManager {
     const names = this.getColumnNames(db, 'sessions');
     if (!names.has('project') || !names.has('cwd') || !names.has('id')) return;
 
-    // Use a single UPDATE with CASE to avoid N individual UPDATE statements.
-    // This keeps startup time constant regardless of session count.
+    // Use a single UPDATE with a searched CASE to avoid N individual UPDATE
+    // statements. This keeps startup time constant regardless of session
+    // count. (Must be searched — `CASE id WHEN id = ?` is a simple case that
+    // compares id against the boolean and never matches, leaving NULL.)
     const projectCwd = db.prepare(
       `SELECT id, cwd FROM sessions WHERE project IS NULL OR project = ''`,
     ).all() as Array<{ id: string; cwd: string | null }>;
@@ -933,7 +935,7 @@ export class DatabaseManager {
       params.push(row.id, project);
     }
 
-    const sql = `UPDATE sessions SET project = CASE id ${cases.join(' ')} END WHERE id IN (${projectCwd.map(() => '?').join(',')})`;
+    const sql = `UPDATE sessions SET project = CASE ${cases.join(' ')} END WHERE id IN (${projectCwd.map(() => '?').join(',')})`;
     params.push(...projectCwd.map(r => r.id));
     db.prepare(sql).run(...params);
   }

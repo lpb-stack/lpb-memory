@@ -11,7 +11,7 @@ import { logMemory } from "../constants.js";
 
 type ChildLlmConfig = Pick<MemoryConfig, "llmModelOverride" | "llmThinkingOverride" | "childExtensionPaths">;
 
-interface PiExecResult {
+export interface PiExecResult {
   code: number;
   stdout?: string;
   stderr?: string;
@@ -518,7 +518,7 @@ function shouldRetryWithoutOverridesForError(error: unknown): boolean {
 // mkdtemp directories when a subprocess hangs, times out, or the watchdog
 // is killed. A single dir with hash-based filenames means identical prompts
 // reuse the same file, and unique prompts get unique names without a counter.
-const SUBPROCESS_PROMPT_DIR = join(os.tmpdir(), "pi-hermes-subprocess-prompts");
+const SUBPROCESS_PROMPT_DIR = join(os.tmpdir(), "lpb-memory-subprocess-prompts");
 
 /**
  * How long to keep a subprocess prompt file after its invocation settles before

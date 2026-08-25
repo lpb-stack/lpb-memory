@@ -360,7 +360,7 @@ describe('DatabaseManager', () => {
       dbManager.getDb();
       dbManager.close();
       const canonicalDbPath = fs.realpathSync(path.join(tmpDir, 'sessions.db'));
-      const lockDbPath = path.join(path.dirname(canonicalDbPath), '.pi-hermes-locks.sqlite');
+      const lockDbPath = path.join(path.dirname(canonicalDbPath), '.lpb-memory-locks.sqlite');
       const lockKey = `recovery:${canonicalDbPath}`;
       const coordinator = new AtomicLockCoordinator(lockDbPath);
       const lease = coordinator.tryAcquire(lockKey, { staleMs: 10_000 });
@@ -391,7 +391,7 @@ describe('DatabaseManager', () => {
       dbManager.close();
       fs.writeFileSync(path.join(tmpDir, 'sessions.db'), 'not a sqlite database');
       const canonicalDbPath = fs.realpathSync(path.join(tmpDir, 'sessions.db'));
-      const lockDbPath = path.join(path.dirname(canonicalDbPath), '.pi-hermes-locks.sqlite');
+      const lockDbPath = path.join(path.dirname(canonicalDbPath), '.lpb-memory-locks.sqlite');
       const coordinator = new AtomicLockCoordinator(lockDbPath);
       coordinator.tryAcquire('schema-init', { staleMs: 50 })!.release();
       const lockDb = new Database(lockDbPath);
@@ -422,7 +422,7 @@ describe('DatabaseManager', () => {
         moveCalls++;
         if (moveCalls === 1) {
           const canonicalDbPath = fs.realpathSync(path.join(tmpDir, 'sessions.db'));
-          const lockDbPath = path.join(path.dirname(canonicalDbPath), '.pi-hermes-locks.sqlite');
+          const lockDbPath = path.join(path.dirname(canonicalDbPath), '.lpb-memory-locks.sqlite');
           const lockKey = `recovery:${canonicalDbPath}`;
           const lockDb = new Database(lockDbPath);
           try {
@@ -458,7 +458,7 @@ describe('DatabaseManager', () => {
       fs.writeFileSync(path.join(realDir, 'sessions.db'), 'not a sqlite database');
 
       const canonicalDbPath = fs.realpathSync(path.join(realDir, 'sessions.db'));
-      const coordinator = new AtomicLockCoordinator(path.join(path.dirname(canonicalDbPath), '.pi-hermes-locks.sqlite'));
+      const coordinator = new AtomicLockCoordinator(path.join(path.dirname(canonicalDbPath), '.lpb-memory-locks.sqlite'));
       const lease = coordinator.tryAcquire(`recovery:${canonicalDbPath}`, { staleMs: 60_000 });
       assert.ok(lease);
 

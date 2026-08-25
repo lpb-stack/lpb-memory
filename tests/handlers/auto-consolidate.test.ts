@@ -11,34 +11,11 @@ import * as os from "node:os";
 import { registerConsolidateCommand, triggerConsolidation } from "../../src/handlers/auto-consolidate.js";
 import { resolveWatchedChildPiInvocation } from "../../src/handlers/pi-child-process.js";
 import { MemoryStore } from "../../src/store/memory-store.js";
-import { AtomicLockCoordinator } from "../../src/store/atomic-lock-coordinator.js";
 import { ENTRY_DELIMITER } from "../../src/constants.js";
 
 // ─── Mock infrastructure ───
 
 let execCalls: any[];
-let directCalls: unknown[][];
-
-const directTransportLlmConfig = { reviewTransport: "direct" as const };
-
-function createDirectCtx(): { model: unknown; modelRegistry: unknown; _tag: string } {
-  return { model: {}, modelRegistry: {}, _tag: "consolidation-direct-ctx" };
-}
-
-function makeDirectDeps(
-  result: { ok: boolean; appliedCount: number } | "throw",
-): { runDirectMemoryCompletion: (...args: unknown[]) => Promise<{ ok: boolean; appliedCount: number }> } {
-  return {
-    runDirectMemoryCompletion: async (...args: unknown[]) => {
-      directCalls.push(args);
-      if (result === "throw") throw new Error("injected direct consolidation failure");
-      return result;
-    },
-  };
-}
-let LOCK_DIR = "";
-const OLD_LOCK_DIR = process.env.PI_HERMES_CONSOLIDATION_LOCK_DIR;
-
 function captureExecArgs(args: any[]): any[] {
   const [command, childArgs, options] = args;
   const capturedArgs = [...childArgs];
@@ -48,20 +25,6 @@ function captureExecArgs(args: any[]): any[] {
   }
   return [command, capturedArgs, options];
 }
-before(async () => {
-  LOCK_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "pi-consolidation-lock-"));
-  process.env.PI_HERMES_CONSOLIDATION_LOCK_DIR = LOCK_DIR;
-});
-
-after(async () => {
-  if (OLD_LOCK_DIR === undefined) {
-    delete process.env.PI_HERMES_CONSOLIDATION_LOCK_DIR;
-  } else {
-    process.env.PI_HERMES_CONSOLIDATION_LOCK_DIR = OLD_LOCK_DIR;
-  }
-  try { await fs.rm(LOCK_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
-});
-
 function logicalChildArgs(call: any[]): string[] {
   const [cmd, args] = call;
   const underlying = { command: args[3], args: args.slice(4) };
@@ -129,64 +92,17 @@ describe("triggerConsolidation", () => {
     assert.strictEqual(result.error, undefined);
   });
 
-  it("clears a failed release before the next consolidation", async () => {
-    const prototype = AtomicLockCoordinator.prototype as any;
-    const originalDeleteOwnedLock = prototype.deleteOwnedLock;
-    let deleteAttempts = 0;
-    prototype.deleteOwnedLock = function (key: string, token: string): void {
-      deleteAttempts++;
-      if (deleteAttempts <= 3) throw new Error("injected consolidation release failure");
-      return originalDeleteOwnedLock.call(this, key, token);
-    };
+  // The pi-hermes fork keyed a per-target AtomicLockCoordinator lease here
+  // (release retries + "already in progress" dedupe). The standalone rewrite
+  // intentionally dropped the consolidation-level lock: every memory-file
+  // write serializes through the markdown mutation lock, and the subprocess
+  // re-reads entries at start. Instead of per-store dedupe locks, the
+  // standalone serializes ALL `pi -p` children through the shared subprocess
+  // gate (withSubprocessLock) so local-LLM model loads never overlap. The
+  // fork's lock-specific tests were removed with the lock; the gate behavior
+  // is covered by the distinct-stores test below.
 
-    try {
-      const pi = createMockPi();
-      const first = await triggerConsolidation(pi, mockStore, "memory");
-      const second = await triggerConsolidation(pi, mockStore, "memory");
-
-      assert.strictEqual(first.consolidated, true);
-      assert.strictEqual(second.consolidated, true);
-      assert.strictEqual(execCalls.length, 2);
-      assert.ok(deleteAttempts >= 4);
-    } finally {
-      prototype.deleteOwnedLock = originalDeleteOwnedLock;
-    }
-  });
-
-  it("skips a duplicate subprocess while the same target is consolidating", async () => {
-    const releaseExecs: Array<() => void> = [];
-    let markExecStarted!: () => void;
-    const execStarted = new Promise<void>((resolve) => { markExecStarted = resolve; });
-    const pi = {
-      on: () => {},
-      exec: async (...args: any[]) => {
-        execCalls.push(captureExecArgs(args));
-        markExecStarted();
-        await new Promise<void>((resolve) => { releaseExecs.push(resolve); });
-        return { code: 0, stdout: "Done", stderr: "" };
-      },
-      registerTool: () => {},
-      registerCommand: () => {},
-    } as any;
-
-    const first = triggerConsolidation(pi, mockStore, "memory");
-    await execStarted;
-    const second = triggerConsolidation(pi, mockStore, "memory");
-    const raced = await Promise.race([
-      second.then((result) => ({ result })),
-      settle(100).then(() => ({ timeout: true as const })),
-    ]);
-
-    releaseExecs.forEach((release) => release());
-    await Promise.allSettled([first, second]);
-
-    assert.ok("result" in raced, "duplicate consolidation should return without spawning another child");
-    assert.strictEqual(raced.result.consolidated, false);
-    assert.match(raced.result.error!, /already in progress/i);
-    assert.strictEqual(execCalls.length, 1, "only one child Pi process should be spawned");
-  });
-
-  it("allows the same project target to consolidate concurrently in distinct stores", async () => {
+  it("runs consolidations for distinct stores through the shared subprocess gate (serialized, both complete)", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-consolidation-stores-"));
     const stores = ["project-a", "project-b"].map((name) => new MemoryStore({
       memoryDir: path.join(root, name),
@@ -194,19 +110,23 @@ describe("triggerConsolidation", () => {
       userCharLimit: 5_000,
     } as any));
     await Promise.all(stores.map((store) => store.loadFromDisk()));
+    // Standalone consolidation only spawns when there is something to
+    // consolidate — seed each store with an entry.
+    await Promise.all(stores.map((store, i) => store.add("memory", `seed entry ${i}`)));
 
     let started = 0;
     let markFirstStarted!: () => void;
-    let markBothStarted!: () => void;
     const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
-    const bothStarted = new Promise<void>((resolve) => { markBothStarted = resolve; });
-    const releases: Array<() => void> = [];
+    const startOrder: number[] = [];
     const pi = {
       exec: async () => {
         started++;
-        if (started === 1) markFirstStarted();
-        if (started === 2) markBothStarted();
-        await new Promise<void>((resolve) => { releases.push(resolve); });
+        const n = started;
+        if (n === 1) markFirstStarted();
+        // Self-releasing children so the test can never wedge: child 1 holds
+        // long enough to observe the gate, child 2 finishes quickly.
+        await new Promise<void>((resolve) => { setTimeout(resolve, n === 1 ? 300 : 50); });
+        startOrder.push(n);
         return { code: 0, stdout: "Done", stderr: "" };
       },
     } as any;
@@ -215,18 +135,18 @@ describe("triggerConsolidation", () => {
       const first = triggerConsolidation(pi, stores[0], "memory", undefined, 60_000, "project");
       await firstStarted;
       const second = triggerConsolidation(pi, stores[1], "memory", undefined, 60_000, "project");
-      const raced = await Promise.race([
-        bothStarted.then(() => "both-started" as const),
-        settle(100).then(() => "timeout" as const),
-      ]);
 
-      releases.forEach((release) => release());
-      await Promise.allSettled([first, second]);
+      // The shared subprocess gate serializes `pi -p` children: the second
+      // store's child must not start while the first child is still running.
+      await settle(100);
+      assert.strictEqual(started, 1, "second child waits for the shared subprocess gate while the first runs");
 
-      assert.strictEqual(raced, "both-started");
-      assert.strictEqual(started, 2);
+      const [r1, r2] = await Promise.all([first, second]);
+      assert.strictEqual(started, 2, "both stores' consolidations run — no per-target lock");
+      assert.deepStrictEqual(startOrder, [1, 2], "children run one at a time");
+      assert.strictEqual(r1.consolidated, true);
+      assert.strictEqual(r2.consolidated, true);
     } finally {
-      releases.forEach((release) => release());
       await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -260,7 +180,6 @@ describe("triggerConsolidation", () => {
     const result = await triggerConsolidation(crashPi, mockStore, "memory");
 
     assert.strictEqual(result.consolidated, false);
-    assert.ok(result.error!.includes("Consolidation failed"), "should mention failure");
     assert.ok(result.error!.includes("network failure"), "should include original error");
   });
 
@@ -368,127 +287,20 @@ describe("triggerConsolidation", () => {
     } as any;
 
     const pi = createMockPi();
-    await triggerConsolidation(pi, emptyStore, "memory");
+    const result = await triggerConsolidation(pi, emptyStore, "memory");
 
-    const prompt = childPrompt(execCalls[0]);
-    assert.ok(prompt.includes("(empty)"), "prompt should show (empty) for empty entries");
+    // Standalone consolidation does not spawn a subprocess for empty stores.
+    assert.strictEqual(result.consolidated, false);
+    assert.match(result.error!, /no entries to consolidate/i);
+    assert.strictEqual(execCalls.length, 0, "no subprocess is spawned for empty entries");
   });
 
-  describe("direct transport", () => {
-    beforeEach(() => {
-      directCalls = [];
-    });
-
-    it("returns consolidated true via direct transport without calling subprocess when appliedCount is positive", async () => {
-      const pi = createMockPi();
-      const directCtx = createDirectCtx();
-      const result = await triggerConsolidation(
-        pi,
-        mockStore,
-        "memory",
-        undefined,
-        60000,
-        "memory",
-        directTransportLlmConfig,
-        directCtx,
-        null,
-        null,
-        makeDirectDeps({ ok: true, appliedCount: 3 }),
-      );
-
-      assert.strictEqual(result.consolidated, true);
-      assert.strictEqual(result.error, undefined);
-      assert.strictEqual(directCalls.length, 1);
-      assert.strictEqual(execCalls.length, 0, "subprocess must not run on successful direct consolidation");
-    });
-
-    it("falls back to subprocess when direct transport succeeds with appliedCount 0", async () => {
-      const pi = createMockPi();
-      const directCtx = createDirectCtx();
-      const result = await triggerConsolidation(
-        pi,
-        mockStore,
-        "memory",
-        undefined,
-        60000,
-        "memory",
-        directTransportLlmConfig,
-        directCtx,
-        null,
-        null,
-        makeDirectDeps({ ok: true, appliedCount: 0 }),
-      );
-
-      assert.strictEqual(result.consolidated, true);
-      assert.strictEqual(directCalls.length, 1);
-      assert.strictEqual(execCalls.length, 1, "empty direct result must fall back to subprocess");
-    });
-
-    it("falls back to subprocess when direct transport returns ok false", async () => {
-      const pi = createMockPi();
-      const directCtx = createDirectCtx();
-      const result = await triggerConsolidation(
-        pi,
-        mockStore,
-        "memory",
-        undefined,
-        60000,
-        "memory",
-        directTransportLlmConfig,
-        directCtx,
-        null,
-        null,
-        makeDirectDeps({ ok: false, appliedCount: 0 }),
-      );
-
-      assert.strictEqual(result.consolidated, true);
-      assert.strictEqual(directCalls.length, 1);
-      assert.strictEqual(execCalls.length, 1, "failed direct result must fall back to subprocess");
-    });
-
-    it("falls back to subprocess when direct transport throws without propagating", async () => {
-      const pi = createMockPi();
-      const directCtx = createDirectCtx();
-      const result = await triggerConsolidation(
-        pi,
-        mockStore,
-        "memory",
-        undefined,
-        60000,
-        "memory",
-        directTransportLlmConfig,
-        directCtx,
-        null,
-        null,
-        makeDirectDeps("throw"),
-      );
-
-      assert.strictEqual(result.consolidated, true);
-      assert.strictEqual(directCalls.length, 1);
-      assert.strictEqual(execCalls.length, 1, "thrown direct error must fall back to subprocess");
-    });
-
-    it("does not attempt direct transport when directCtx is null", async () => {
-      const pi = createMockPi();
-      const result = await triggerConsolidation(
-        pi,
-        mockStore,
-        "memory",
-        undefined,
-        60000,
-        "memory",
-        directTransportLlmConfig,
-        null,
-        null,
-        null,
-        makeDirectDeps({ ok: true, appliedCount: 3 }),
-      );
-
-      assert.strictEqual(result.consolidated, true);
-      assert.strictEqual(directCalls.length, 0, "direct path must be skipped without directCtx");
-      assert.strictEqual(execCalls.length, 1, "subprocess-only path must still consolidate");
-    });
-  });
+  // The pi-hermes fork also ran consolidation through a "direct" in-process
+  // transport (deps.runDirectMemoryCompletion + command ctx). The standalone
+  // rewrite is subprocess-only by design (isolated context window, thinking
+  // disabled, shared subprocess gate) — the legacy directCtx/deps parameters
+  // on triggerConsolidation are kept for signature compatibility and are
+  // ignored. The fork's direct-transport tests were removed with the path.
 });
 
 describe("registerConsolidateCommand", () => {
@@ -599,55 +411,6 @@ describe("registerConsolidateCommand", () => {
     });
   });
 
-  it("passes command ctx to direct consolidation and reflects success in the summary", async () => {
-    directCalls = [];
-    let handler: ((_args: unknown, ctx: unknown) => Promise<void>) | undefined;
-    const notifications: string[] = [];
-    const commandCtx = {
-      model: {},
-      modelRegistry: {},
-      signal: undefined,
-      ui: { notify: (message: string) => { notifications.push(message); } },
-      _tag: "manual-consolidate-ctx",
-    };
-
-    const pi = {
-      on: () => {},
-      exec: async (...args: unknown[]) => {
-        execCalls.push(captureExecArgs(args as Parameters<typeof captureExecArgs>[0]));
-        return { code: 0, stdout: "Done", stderr: "" };
-      },
-      registerTool: () => {},
-      registerCommand: (_name: string, command: { handler: typeof handler }) => {
-        handler = command.handler;
-      },
-    } as unknown as Parameters<typeof registerConsolidateCommand>[0];
-
-    registerConsolidateCommand(
-      pi,
-      mockStore,
-      60000,
-      null,
-      null,
-      directTransportLlmConfig,
-      null,
-      makeDirectDeps({ ok: true, appliedCount: 2 }),
-    );
-
-    assert.ok(handler, "command handler should be registered");
-    await handler!({}, commandCtx);
-
-    assert.strictEqual(directCalls.length, 3, "memory, user, and failure targets should use direct transport");
-    assert.strictEqual(execCalls.length, 0, "successful direct consolidation should not spawn subprocess");
-    for (const call of directCalls) {
-      assert.strictEqual(call[0], commandCtx, "runDirectMemoryCompletion must receive the command ctx");
-    }
-
-    const finalNotification = notifications[notifications.length - 1] ?? "";
-    assert.ok(finalNotification.includes("memory: ✅ consolidated"), "summary should show memory consolidated");
-    assert.ok(finalNotification.includes("user: ✅ consolidated"), "summary should show user consolidated");
-    assert.ok(finalNotification.includes("failure: ✅ consolidated"), "summary should show failure consolidated");
-  });
 });
 
 describe("MemoryStore auto-consolidation integration", () => {

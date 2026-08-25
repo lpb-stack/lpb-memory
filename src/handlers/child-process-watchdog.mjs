@@ -5,7 +5,7 @@ const [timeoutValue, cancellationPath, command, ...args] = process.argv.slice(2)
 const timeoutMs = Number(timeoutValue);
 
 if (!cancellationPath || !command || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-  process.stderr.write("pi-hermes-memory watchdog: invalid invocation\n");
+  process.stderr.write("lpb-memory watchdog: invalid invocation\n");
   process.exit(2);
 }
 
@@ -49,7 +49,7 @@ function terminateTree() {
 
 const timeout = setTimeout(() => {
   timedOut = true;
-  process.stderr.write(`[pi-hermes-memory] child timed out after ${timeoutMs}ms; terminating process tree\n`);
+  process.stderr.write(`[lpb-memory] child timed out after ${timeoutMs}ms; terminating process tree\n`);
   terminateTree();
 }, timeoutMs);
 timeout.unref();
@@ -57,7 +57,7 @@ timeout.unref();
 const cancellationPoll = cancellationPath === "-" ? undefined : setInterval(() => {
   if (!existsSync(cancellationPath)) return;
   cancelled = true;
-  process.stderr.write("[pi-hermes-memory] child cancellation requested; terminating process tree\n");
+  process.stderr.write("[lpb-memory] child cancellation requested; terminating process tree\n");
   terminateTree();
 }, 25);
 cancellationPoll?.unref();
@@ -70,7 +70,7 @@ child.once("error", (error) => {
   clearTimeout(timeout);
   if (cancellationPoll) clearInterval(cancellationPoll);
   if (forceTimer) clearTimeout(forceTimer);
-  process.stderr.write(`pi-hermes-memory watchdog: ${error.message}\n`);
+  process.stderr.write(`lpb-memory watchdog: ${error.message}\n`);
   process.exitCode = timedOut ? 124 : cancelled ? 143 : 127;
 });
 

@@ -491,7 +491,20 @@ describe("execChildPrompt", () => {
     });
 
     assert.equal(result.code, 143);
-    await assert.rejects(fs.access(cancelPath), { code: "ENOENT" });
+    // The cancel marker is unlinked fire-and-forget in the cleanup path —
+    // poll briefly instead of racing a single fs.access against the unlink.
+    const markerDeadline = Date.now() + 2000;
+    let markerGone = false;
+    while (Date.now() < markerDeadline) {
+      try {
+        await fs.access(cancelPath);
+      } catch {
+        markerGone = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(markerGone, "cancel marker should be removed after exec resolves");
   });
 
   it("hard-kills a child that ignores graceful timeout termination", async () => {
@@ -614,8 +627,21 @@ describe("execChildPrompt", () => {
     const result = await execChildPrompt(pi as any, secret, {}, { timeoutMs: 30000 });
 
     assert.equal(result.code, 0);
-    await assert.rejects(fs.access(promptPath), { code: "ENOENT" });
-    await assert.rejects(fs.access(path.dirname(promptPath)), { code: "ENOENT" });
+    // Prompt files live in a shared temp dir and are removed after a 5s grace
+    // period (a detached child may still be reading the @file reference) —
+    // poll for eventual removal instead of expecting immediate deletion.
+    const graceDeadline = Date.now() + 8000;
+    let promptGone = false;
+    while (Date.now() < graceDeadline) {
+      try {
+        await fs.access(promptPath);
+      } catch {
+        promptGone = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(promptGone, "prompt file should be removed after the cleanup grace");
   });
 
   it("removes the temporary prompt file when child execution throws", async () => {
@@ -634,15 +660,29 @@ describe("execChildPrompt", () => {
     );
 
     assert.ok(promptPath.startsWith(os.tmpdir()));
-    await assert.rejects(fs.access(promptPath), { code: "ENOENT" });
+    // Cleanup is delayed by the shared cleanup grace — poll for removal.
+    const graceDeadline = Date.now() + 8000;
+    let promptGone = false;
+    while (Date.now() < graceDeadline) {
+      try {
+        await fs.access(promptPath);
+      } catch {
+        promptGone = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(promptGone, "prompt file should be removed after the cleanup grace");
   });
 
   it("returns a successful child result when temporary cleanup fails", async () => {
-    let cleanupCalls = 0;
-    let promptDirectory = "";
+    let markerPath = "";
     const pi = {
       exec: async (_cmd: string, args: string[]) => {
-        promptDirectory = path.dirname(args.at(-1)!.slice(1));
+        markerPath = args[2];
+        // Make the cancel-marker path a directory so the fire-and-forget
+        // fs.unlink in the cleanup path fails (EISDIR) like any I/O error.
+        await fs.mkdir(markerPath, { recursive: true });
         return { code: 0, stdout: "completed", stderr: "" };
       },
     };
@@ -653,19 +693,12 @@ describe("execChildPrompt", () => {
         "cleanup failure prompt",
         {},
         { timeoutMs: 30000 },
-        {
-          removeTemporaryDirectory: async () => {
-            cleanupCalls++;
-            throw new Error("cleanup denied");
-          },
-        },
       );
 
       assert.equal(result.code, 0);
       assert.equal(result.stdout, "completed");
-      assert.equal(cleanupCalls, 1);
     } finally {
-      if (promptDirectory) await fs.rm(promptDirectory, { recursive: true, force: true });
+      if (markerPath) await fs.rm(markerPath, { recursive: true, force: true });
     }
   });
 
