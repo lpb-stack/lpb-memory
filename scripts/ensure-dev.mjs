@@ -6,7 +6,7 @@
  * When those scripts are run from an installed package (e.g. after `pi install`),
  * fail with a clear message instead of `tsc: not found` / `tests/run-all.sh: not found`.
  *
- * @see https://github.com/chandra447/pi-hermes-memory/issues/108
+ * @see https://github.com/chandra447/lpb-memory/issues/108
  */
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -15,14 +15,14 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv[2];
-const REPO = "https://github.com/chandra447/pi-hermes-memory";
+const REPO = "https://github.com/chandra447/lpb-memory";
 
 function fail(message) {
-  console.error(`\n[pi-hermes-memory] ${message}`);
+  console.error(`\n[lpb-memory] ${message}`);
   console.error("");
   console.error("These scripts only work from a full source checkout:");
   console.error(`  git clone ${REPO}.git`);
-  console.error("  cd pi-hermes-memory && npm install");
+  console.error("  cd lpb-memory && npm install");
   console.error("  npm run check   # or: npm test");
   console.error("");
   console.error(

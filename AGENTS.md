@@ -70,5 +70,5 @@ pi -e ./src/index.ts
 ## Installation (for users)
 
 ```bash
-pi install github:chandra447/pi-hermes-memory
+pi install github:lpb-stack/lpb-memory
 ```

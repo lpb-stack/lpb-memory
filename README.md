@@ -85,7 +85,7 @@ The extension manages three types of knowledge:
 
 | Tier | Location | What goes here |
 |---|---|---|
-| **Global** | `~/.pi/agent/pi-hermes-memory/` | Facts that apply everywhere |
+| **Global** | `~/.pi/agent/lpb-memory/` | Facts that apply everywhere |
 | **Project** | `~/.pi/agent/projects-memory/<project>/` | Facts scoped to one codebase |
 
 ### Failure Memory Categories

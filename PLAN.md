@@ -172,7 +172,7 @@ Before any write, content is scanned for:
 ## File Structure
 
 ```
-pi-hermes-memory/
+lpb-memory/
 ├── package.json              # For pi install
 ├── src/
 │   ├── index.ts              # Extension entry point — wires everything together
@@ -918,7 +918,7 @@ export default function (pi: ExtensionAPI) {
 
 ```json
 {
-  "name": "pi-hermes-memory",
+  "name": "lpb-memory",
   "version": "1.0.0",
   "description": "Hermes-style persistent memory and learning loop for Pi coding agent",
   "main": "src/index.ts",
