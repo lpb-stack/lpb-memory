@@ -458,10 +458,9 @@ Ask these questions ONE AT A TIME, waiting for the user's answer before moving t
 1. What should I call you? (name or nickname)
 2. What timezone are you in?
 3. What programming languages and tools do you use most?
-4. What's your preferred editor or IDE?
-5. How do you like me to communicate? (concise vs detailed, show code vs explain, etc.)
-6. Anything about your work style I should know? (action-first vs plan-first, specific workflows, pet peeves)
-7. Is there anything else you want me to always remember?
+4. How do you like me to communicate? (concise vs detailed, show code vs explain, etc.)
+5. Anything about your work style I should know? (action-first vs plan-first, specific workflows, pet peeves)
+6. Is there anything else you want me to always remember?
 
 After EACH answer, immediately save it to the 'user' target using the memory tool. Use 'add' for new facts. If you're updating something they already told you, use 'replace'.
 
