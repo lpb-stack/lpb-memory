@@ -4,13 +4,14 @@
 
 This is a Pi coding agent extension that brings Hermes-style persistent memory and a learning loop to any Pi user. After `pi install`, users get persistent memory across sessions, a background learning loop, and session-end flush.
 
-**v0.1 is complete** (119 tests, v0.1.0 tagged). Current work is **v0.2: Skills + Smart Curation** — see `docs/0.2/TASKS.md`.
+**v0.1 core is complete.** Current work is **v0.7: Token-Aware Graph-Based
+Memory Retrieval** — see `docs/0.7/PLAN.md` / `docs/0.7/TASKS.md`.
 
 ## Architecture
 
 - **Language**: TypeScript (loaded via jiti, no compilation needed at runtime)
 - **Runtime**: Pi extension API (`@earendil-works/pi-coding-agent`)
-- **Storage**: Two markdown files (`MEMORY.md`, `USER.md`) in `~/.pi/agent/memory/`
+- **Storage**: Two markdown files (`MEMORY.md`, `USER.md`) in `~/.pi/agent/lpb-memory/` (global) + per-project `~/.pi/agent/projects-memory/`
 - **Entry point**: `src/index.ts` — registers tools, event handlers, and commands
 
 ## Key Files
@@ -46,16 +47,16 @@ The implementation is ported from the Hermes agent harness. See `PLAN.md` → "H
 
 - **Roadmap**: `docs/ROADMAP.md` — full roadmap with Hermes competitive analysis, gap analysis, and phased plan (v0.1 → v0.5 → v1.0)
 - **v0.1 tasks** (complete): `docs/0.1/TASKS.md`
-- **v0.2 tasks** (current): `docs/0.2/TASKS.md` — Skills, auto-consolidation, correction detection, tool-call-aware nudge
+- **v0.7 tasks** (current): `docs/0.7/TASKS.md` — token-aware graph-based memory retrieval
 
 **Workflow:**
-1. Pick a task from `docs/0.2/TASKS.md`
+1. Pick a task from `docs/0.7/TASKS.md`
 2. Mark it `[~]` (in progress)
 3. Implement it
 4. Mark it `[x]` (done) with the commit hash
 5. Move to the next task
 
-**Before starting any work, read `docs/0.2/TASKS.md` to see what's next.**
+**Before starting any work, read `docs/0.7/TASKS.md` to see what's next.**
 
 ## Development
 
@@ -70,5 +71,5 @@ pi -e ./src/index.ts
 ## Installation (for users)
 
 ```bash
-pi install github:lpb-stack/lpb-memory
+pi install git:github.com/lpb-stack/lpb-memory@main
 ```
