@@ -6,7 +6,7 @@
  * When those scripts are run from an installed package (e.g. after `pi install`),
  * fail with a clear message instead of `tsc: not found` / `tests/run-all.sh: not found`.
  *
- * @see https://github.com/chandra447/lpb-memory/issues/108
+ * @see https://github.com/lpb-stack/lpb-memory/issues/108
  */
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv[2];
-const REPO = "https://github.com/chandra447/lpb-memory";
+const REPO = "https://github.com/lpb-stack/lpb-memory";
 
 function fail(message) {
   console.error(`\n[lpb-memory] ${message}`);
