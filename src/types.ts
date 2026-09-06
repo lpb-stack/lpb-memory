@@ -92,6 +92,8 @@ export interface MemoryConfig {
   nudgeToolCalls: number;
   /** Maximum time in milliseconds for auto-consolidation to complete. Default: 60000 */
   consolidationTimeoutMs: number;
+  /** Enable/disable the entire memory system (injection, tools, background review). Default: true */
+  memoryEnabled: boolean;
 }
 
 export type MemoryCategory =

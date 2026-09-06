@@ -85,8 +85,19 @@ export function registerProjectSkillDiscoveryHandler(
 
 export default function (pi: ExtensionAPI) {
   const config = loadConfig();
-
   const agentRoot = AGENT_ROOT;
+
+  // ── Memory system disabled — register minimal no-op handlers ──
+  if (!config.memoryEnabled) {
+    // Still initialize DB and handle migrations for consistency.
+    // The extension log will note that memory is disabled.
+    console.info("[lpb-memory] Memory system disabled (memoryEnabled=false). Skipping injection, tools, and background review.");
+
+    const globalDir = path.join(agentRoot, "lpb-memory");
+    const dbManager = new DatabaseManager(globalDir);
+    try { dbManager.close(); } catch { /* best effort */ }
+    return;
+  }
   const legacyGlobalDir = path.join(agentRoot, "memory");
   const defaultGlobalDir = path.join(agentRoot, "lpb-memory");
 

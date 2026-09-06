@@ -65,6 +65,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
   nudgeToolCalls: DEFAULT_NUDGE_TOOL_CALLS,
   projectsMemoryDir: DEFAULT_PROJECTS_MEMORY_DIR,
   sessionSearch: { variant: "legacy" },
+  memoryEnabled: true,
 };
 
 export const DEFAULT_CONFIG_PATH = path.join(
@@ -145,6 +146,7 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): MemoryConfig {
         if (trimmed.length > 0) config.llmModelOverride = trimmed;
       }
       if (isThinkingLevel(parsed.llmThinkingOverride)) config.llmThinkingOverride = parsed.llmThinkingOverride;
+      if (typeof parsed.memoryEnabled === "boolean") config.memoryEnabled = parsed.memoryEnabled;
       if (isStringArray(parsed.childExtensionPaths)) {
         const childExtensionPaths = [...new Set<string>(
           (parsed.childExtensionPaths as string[]).map((item) => item.trim()).filter(Boolean),
