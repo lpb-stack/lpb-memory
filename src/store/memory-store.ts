@@ -50,6 +50,9 @@ export class MemoryStore {
   private storagePaths: Partial<Record<"memory" | "user" | "failure", string>> = {};
   private snapshot: MemorySnapshot = { memory: "", user: "" };
   private consolidator: ((target: "memory" | "user" | "failure", signal?: AbortSignal) => Promise<ConsolidationResult>) | null = null;
+
+  /** Targets with a background consolidation currently running. */
+  private consolidationInFlight = new Set<string>();
   private mutationObserver: ((target: "memory" | "user" | "failure", entries: string[]) => Promise<string | null | undefined>) | null = null;
 
   constructor(private config: MemoryConfig) {}
@@ -143,7 +146,7 @@ export class MemoryStore {
   // ─── CRUD ───
 
   async add(target: "memory" | "user" | "failure", content: string, signal?: AbortSignal): Promise<MemoryResult> {
-    return this.addWithConsolidation(target, content, signal, 1, "Entry added.");
+    return this.addWithConsolidation(target, content, signal, "Entry added.");
   }
 
   async addFailure(content: string, options: {
@@ -155,7 +158,7 @@ export class MemoryStore {
   }): Promise<MemoryResult> {
     const failureText = this.buildFailureMemoryText(content, options);
     return this.addWithConsolidation(
-      "failure", failureText, undefined, 1, "Failure memory saved: " + options.category, options.project,
+      "failure", failureText, undefined, "Failure memory saved: " + options.category, options.project,
     );
   }
 
@@ -222,11 +225,21 @@ export class MemoryStore {
     return this.successResponse(target, addedMessage);
   }
 
+  /**
+   * Add with overflow handling. On overflow under the auto-consolidate
+   * strategy, consolidation is started in the BACKGROUND and the overflow
+   * error is returned immediately — the tool call no longer blocks the agent
+   * loop for the LLM consolidation pass (previously up to consolidationTimeoutMs,
+   * 5 min). The consolidator's LLM runs in a `pi -p` subprocess with the
+   * configured NPU model, so the main session can keep working on its own
+   * model meanwhile. The next add benefits once consolidation frees space.
+   *
+   * A per-target in-flight guard prevents stacking consolidation runs.
+   */
   private async addWithConsolidation(
     target: "memory" | "user" | "failure",
     content: string,
     signal: AbortSignal | undefined,
-    retriesLeft: number,
     addedMessage: string,
     project?: string,
   ): Promise<MemoryResult> {
@@ -236,7 +249,6 @@ export class MemoryStore {
     );
     if (
       result.success
-      || retriesLeft <= 0
       || this.memoryOverflowStrategy() !== "auto-consolidate"
       || !this.consolidator
       || !result.error?.startsWith("Memory at ")
@@ -244,23 +256,39 @@ export class MemoryStore {
       return result;
     }
 
-    try {
-      logMemory(`addWithConsolidation: triggering for '${target}', retriesLeft=${retriesLeft}`);
-      const consolidation = await this.consolidator(target, signal);
-      if (consolidation.consolidated) {
-        logMemory(`addWithConsolidation: consolidation succeeded for '${target}', retrying add`);
-        await this.loadFromDisk();
-        return this.addWithConsolidation(target, content, signal, retriesLeft - 1, addedMessage, project);
-      }
-      // Consolidation ran but didn't free enough space
-      logMemory(`addWithConsolidation: consolidation did not free space for '${target}' (error: ${consolidation.error ?? "unknown"})`, "error");
-    } catch (err) {
-      // Consolidation threw — likely DB error, stale ctx, or subprocess failure.
-      // Log at error level and let the caller get the original memory-full error.
-      const errMsg = err instanceof Error ? err.message : String(err);
-      logMemory(`addWithConsolidation: consolidation threw exception for '${target}': ${errMsg}`, "error");
+    if (this.consolidationInFlight.has(target)) {
+      return {
+        ...result,
+        error: `${result.error} Background consolidation is already in progress — retry in a few minutes.`,
+      };
     }
-    return result;
+
+    this.consolidationInFlight.add(target);
+    // Deliberately NOT passing the tool's signal: consolidation must survive
+    // the triggering tool call being aborted. The subprocess watchdog timeout
+    // (consolidationTimeoutMs) bounds the run.
+    void this.consolidator(target, undefined)
+      .then((consolidation) => {
+        if (consolidation.consolidated) {
+          logMemory(`addWithConsolidation: background consolidation succeeded for '${target}'`);
+        } else {
+          logMemory(`addWithConsolidation: background consolidation did not free space for '${target}' (error: ${consolidation.error ?? "unknown"})`, "error");
+        }
+      })
+      .catch((err) => {
+        // Consolidation threw — likely stale ctx, subprocess failure, or host
+        // problem. Log it; the caller already has the memory-full error.
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logMemory(`addWithConsolidation: background consolidation threw exception for '${target}': ${errMsg}`, "error");
+      })
+      .finally(() => {
+        this.consolidationInFlight.delete(target);
+      });
+
+    return {
+      ...result,
+      error: `${result.error} Background consolidation started — retry the memory tool in a few minutes.`,
+    };
   }
 
   private async fifoEvictAndAdd(

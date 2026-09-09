@@ -424,7 +424,7 @@ describe("MemoryStore auto-consolidation integration", () => {
     try { await fs.rm(MEMORY_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  it("add() triggers consolidation when over limit with consolidator", async () => {
+  it("add() returns immediately and triggers background consolidation when over limit", async () => {
     let consolidatorCalled = false;
     let consolidatorTarget: string | undefined;
 
@@ -461,13 +461,27 @@ describe("MemoryStore auto-consolidation integration", () => {
     const smallEntry = "a".repeat(60);
     await store.add("memory", smallEntry);
 
-    // This add should exceed limit and trigger consolidation
+    // This add should exceed the limit: it returns the limit error
+    // immediately and starts consolidation in the background (the tool call
+    // is no longer held open while the LLM pass runs).
     const result = await store.add("memory", "b".repeat(20));
 
+    assert.ok(!result.success, "overflow add returns the limit error immediately");
+    assert.ok(result.error!.includes("Background consolidation started"));
+
+    // Wait for the detached consolidator to finish freeing space.
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (consolidatorCalled) { clearInterval(timer); resolve(); }
+      }, 10);
+      setTimeout(() => { clearInterval(timer); resolve(); }, 5000).unref?.();
+    });
     assert.ok(consolidatorCalled, "consolidator should have been called");
     assert.strictEqual(consolidatorTarget, "memory");
-    // After consolidation removes entries, the new entry should fit
-    assert.ok(result.success, "add should succeed after consolidation");
+
+    // Retry after consolidation removed entries: the new entry now fits.
+    const retry = await store.add("memory", "b".repeat(20));
+    assert.ok(retry.success, "retry should succeed after background consolidation");
   });
 
   it("add() skips consolidation when autoConsolidate is false", async () => {

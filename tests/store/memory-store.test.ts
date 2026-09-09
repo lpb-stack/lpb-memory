@@ -205,6 +205,70 @@ describe("MemoryStore", { concurrency: 1 }, () => {
       assert.ok(result.error!.includes("exceed the limit"));
     });
 
+    it("returns immediately and starts background consolidation when memory is full (auto-consolidate)", async () => {
+      let consolidatorCalled = 0;
+      let releaseConsolidator!: () => void;
+      const consolidatorGate = new Promise<void>((resolve) => { releaseConsolidator = resolve; });
+      const store = new MemoryStore(makeConfig({
+        memoryCharLimit: 50,
+        memoryOverflowStrategy: "auto-consolidate",
+        autoConsolidate: true,
+      }));
+      store.setConsolidator(async () => {
+        consolidatorCalled++;
+        await consolidatorGate;
+        return { consolidated: true };
+      });
+      await store.loadFromDisk();
+
+      const started = Date.now();
+      const result = await store.add("memory", `${TEST_MARKER} ${"x".repeat(60)}`);
+      const elapsed = Date.now() - started;
+
+      assert.ok(!result.success);
+      assert.ok(result.error!.includes("exceed the limit"));
+      assert.ok(result.error!.includes("Background consolidation started"));
+      assert.ok(elapsed < 200, `overflow add should return immediately, took ${elapsed}ms`);
+      assert.equal(consolidatorCalled, 1);
+
+      // A second overflow add while the first consolidation is in flight must
+      // not stack another consolidation run.
+      const second = await store.add("memory", `${TEST_MARKER} ${"y".repeat(60)}`);
+      assert.ok(!second.success);
+      assert.ok(second.error!.includes("already in progress"));
+      assert.equal(consolidatorCalled, 1);
+
+      releaseConsolidator();
+      await settle();
+    });
+
+    it("next add succeeds once background consolidation frees space", async () => {
+      let releaseConsolidator!: () => void;
+      const consolidatorGate = new Promise<void>((resolve) => { releaseConsolidator = resolve; });
+      const store = new MemoryStore(makeConfig({
+        memoryCharLimit: 200,
+        memoryOverflowStrategy: "auto-consolidate",
+        autoConsolidate: true,
+      }));
+      store.setConsolidator(async () => {
+        // Simulate consolidation trimming the store down on disk.
+        await writeRaw(memoryPath, `${TEST_MARKER} condensed <!-- created=2026-01-01, last=2026-01-01 -->`);
+        await consolidatorGate;
+        return { consolidated: true };
+      });
+      await store.loadFromDisk();
+
+      const first = await store.add("memory", `${TEST_MARKER} ${"x".repeat(150)}`);
+      assert.ok(!first.success);
+      assert.ok(first.error!.includes("Background consolidation started"));
+
+      releaseConsolidator();
+      await settle();
+
+      const retry = await store.add("memory", `${TEST_MARKER} new entry`);
+      assert.ok(retry.success, retry.error);
+    });
+
     it("evicts oldest entries in file order when memoryOverflowStrategy is fifo-evict", async () => {
       let consolidatorCalled = false;
       const store = new MemoryStore(makeConfig({

@@ -34,25 +34,39 @@ const DEFAULT_EXEC_CHILD_PROMPT_DEPENDENCIES: ExecChildPromptDependencies = {
   },
 };
 
-// ── Shared subprocess gate ──────────────────────────────────────────────────
+// ── Shared subprocess gate (per-model) ─────────────────────────────────────
 // Every `pi -p` subprocess (background review, correction, flush, and each
-// consolidation batch) is serialized through this single lock. On a local LLM
-// host, overlapping subprocesses trigger simultaneous model load/unload and
-// risk OOM when large Qwen models cannot be resident at the same time. A single
-// in-process promise-chain mutex caps concurrency at 1 without any external
+// consolidation batch) is serialized through a promise-chain lock keyed by
+// its effective model. On a local LLM host, overlapping subprocesses of the
+// SAME model trigger simultaneous load/unload of that model and risk OOM
+// when large Qwen models cannot be resident at the same time — per-model
+// locking preserves that guarantee. Subprocesses of DIFFERENT models are
+// allowed to overlap: the host serves them from separate slots (e.g. the
+// main GPU model vs. the NPU model), and the interactive session's own
+// model requests never pass through this gate anyway. A per-model in-process
+// promise-chain mutex caps same-model concurrency at 1 without any external
 // coordinator while keeping the parent session's event loop unblocked.
-let subprocessChain: Promise<unknown> = Promise.resolve();
+const DEFAULT_SUBPROCESS_MODEL_KEY = "default";
+const subprocessChains = new Map<string, Promise<unknown>>();
 
 /**
- * Serialize child-subprocess invocations so only one `pi -p` spawn is in flight
- * at a time across the whole extension. Errors from one call do not break the
- * chain for subsequent callers.
+ * Serialize child-subprocess invocations per model so at most one `pi -p`
+ * spawn using the same model is in flight at a time. Different model keys run
+ * in parallel. Errors from one call do not break the chain for subsequent
+ * callers.
  */
-export function withSubprocessLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = subprocessChain.then(fn, fn);
-  subprocessChain = run.then(
-    () => undefined,
-    () => undefined,
+export function withSubprocessLock<T>(
+  fn: () => Promise<T>,
+  modelKey: string = DEFAULT_SUBPROCESS_MODEL_KEY,
+): Promise<T> {
+  const chain = subprocessChains.get(modelKey) ?? Promise.resolve();
+  const run = chain.then(fn, fn);
+  subprocessChains.set(
+    modelKey,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
   );
   return run;
 }
@@ -563,9 +577,14 @@ export async function execChildPrompt(
   dependencies: ExecChildPromptDependencies = DEFAULT_EXEC_CHILD_PROMPT_DEPENDENCIES,
 ): Promise<PiExecResult> {
   // Serialize this invocation through the shared subprocess gate so that at most
-  // one `pi -p` subprocess runs at a time across review/correction/flush/
-  // consolidation — prevents overlapping model loads on a local LLM host.
-  return withSubprocessLock(() => execChildPromptInner(pi, prompt, config, options, dependencies));
+  // one `pi -p` subprocess per model runs at a time across review/correction/
+  // flush/consolidation — prevents overlapping loads of the SAME model on a local
+  // LLM host while letting subprocesses of different models (e.g. main GPU model
+  // vs. NPU model) run in parallel.
+  return withSubprocessLock(
+    () => execChildPromptInner(pi, prompt, config, options, dependencies),
+    normalizedModelOverride(config) ?? DEFAULT_SUBPROCESS_MODEL_KEY,
+  );
 }
 
 async function execChildPromptInner(

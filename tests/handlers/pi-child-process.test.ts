@@ -14,6 +14,7 @@ import {
   inheritedExtensionArgs,
   resolveChildPiInvocation,
   resolveWatchedChildPiInvocation,
+  withSubprocessLock,
 } from "../../src/handlers/pi-child-process.js";
 
 function logicalChildArgs(call: { cmd: string; args: string[] }): string[] {
@@ -909,5 +910,53 @@ describe("execChildPrompt", () => {
 
     assert.strictEqual(result.code, 1);
     assert.strictEqual(calls.length, 1);
+  });
+});
+
+describe("withSubprocessLock (per-model subprocess gate)", () => {
+  it("serializes invocations with the same model key", async () => {
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const work = (ms: number) => withSubprocessLock(async () => {
+      concurrent++;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise((resolve) => { setTimeout(resolve, ms); });
+      concurrent--;
+    }, "model-a");
+    await Promise.all([work(100), work(20)]);
+    assert.equal(maxConcurrent, 1);
+  });
+
+  it("runs invocations with different model keys in parallel", async () => {
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const work = (key: string) => withSubprocessLock(async () => {
+      concurrent++;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise((resolve) => { setTimeout(resolve, 80); });
+      concurrent--;
+    }, key);
+    await Promise.all([work("model-a"), work("model-b")]);
+    assert.equal(maxConcurrent, 2);
+  });
+
+  it("execChildPrompt: same-model calls serialize, different-model calls overlap", async () => {
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const pi = {
+      exec: async () => {
+        concurrent++;
+        maxConcurrent = Math.max(maxConcurrent, concurrent);
+        await new Promise((resolve) => { setTimeout(resolve, 80); });
+        concurrent--;
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+    const a1 = execChildPrompt(pi as any, "p1", { llmModelOverride: "m1" }, { timeoutMs: 30000 });
+    const a2 = execChildPrompt(pi as any, "p2", { llmModelOverride: "m1" }, { timeoutMs: 30000 });
+    const b = execChildPrompt(pi as any, "p3", { llmModelOverride: "m2" }, { timeoutMs: 30000 });
+    await Promise.all([a1, a2, b]);
+    // m1 serialized against itself; m2 overlaps with exactly one m1 at a time.
+    assert.equal(maxConcurrent, 2);
   });
 });
