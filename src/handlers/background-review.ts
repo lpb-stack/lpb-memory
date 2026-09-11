@@ -218,8 +218,12 @@ export function setupBackgroundReview(
     toolCallsSinceReview = 0;
     reviewInProgress = true;
 
-    // Show status in footer so user knows review is in progress (not stuck)
-    ctx.ui.setStatus("memory", "[reviewing]");
+    // Show status in footer so user knows review is in progress (not stuck).
+    // Plain (non-bracketed) text: pi-powerline-footer treats "["-prefixed
+    // statuses as notifications rendered above the editor, while plain text
+    // flows into the footer's inline extension_statuses segment (and the
+    // dedicated powerline custom item, configured in the config repo).
+    ctx.ui.setStatus("memory", "🧠 memory: reviewing");
 
     let allParts: string[] = [];
     try {

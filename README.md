@@ -35,7 +35,7 @@ extension fixes that.
 |---|---|---|
 | **Review transport** | In-process | **Subprocess** (`pi -p`) for context isolation |
 | **Model override** | Limited | Full `llmModelOverride` / `llmThinkingOverride` |
-| **Footer status** | Basic | Bracketed format (`[reviewing]`) visible in Pi UI |
+| **Footer status** | Basic | Plain status text (`🧠 memory: reviewing`) — inline in the Pi powerline footer, not a bracketed notification line |
 | **Configuration** | `lpb-memory-config.json` at extension root | Centralized in `~/.pi/agent/` via `pi-defaults.json` |
 | **Spawn serialization** | Parallel (race-prone) | **Serialized** with review backoff |
 | **Upstream** | Tracked `chandra447/pi-hermes-memory` | **Independent** — no upstream |

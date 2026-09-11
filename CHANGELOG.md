@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Background review footer status is now inline instead of a notification line.** The review status was published as `[reviewing]`, and `pi-powerline-footer` treats any `[`-prefixed status text as a *notification* — a standalone line rendered above the editor, excluded from the powerline bar. The status is now plain text (`🧠 memory: reviewing`), so it flows into the footer's `extension_statuses` segment like MCP's status, and the config repo's `powerline.customItems` promotes it to a dedicated powerline cell (`hideWhenMissing` hides it when no review is running).
+
 ## [0.9.1] - 2026-07-27
 
 ### Changed
