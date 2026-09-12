@@ -18,6 +18,7 @@ import { resolveConfig } from "../types.js";
 import { applyRecentMessageLimit, collectMessageParts } from "./message-parts.js";
 import { execChildPrompt, type PiExecResult } from "./pi-child-process.js";
 import { runDirectMemoryCompletion, usesDirectTransport, type DirectReviewResult } from "./review-memory-ops.js";
+import { MEMORY_STATUS_KEY, REVIEWING_STATUS_TEXT, restoreMemoryStatus, type StatusCtx } from "./footer-status.js";
 
 export interface BackgroundReviewOptions {
   dbManager?: DatabaseManager | null;
@@ -32,6 +33,9 @@ export interface BackgroundReviewDeps {
    * fire-and-forget review work completes and reviewInProgress resets),
    * since production callers never await runReview() directly. */
   onReviewSettled?: () => void;
+  /** Restore the persistent baseline footer status after the transient
+   * "reviewing" status (footerStatus flag). Falls back to clearing. */
+  restoreFooterStatus?: (ctx: StatusCtx) => void;
 }
 
 export interface ReviewPromptInput {
@@ -158,6 +162,7 @@ export function setupBackgroundReview(
   const runDirectReview = options.deps?.runDirectReview ?? runDirectMemoryCompletion;
   const execChild = options.deps?.execChildPrompt ?? execChildPrompt;
   const onReviewSettled = options.deps?.onReviewSettled;
+  const restoreStatus = options.deps?.restoreFooterStatus;
 
   let turnsSinceReview = 0;
   let toolCallsSinceReview = 0;
@@ -223,7 +228,11 @@ export function setupBackgroundReview(
     // statuses as notifications rendered above the editor, while plain text
     // flows into the footer's inline extension_statuses segment (and the
     // dedicated powerline custom item, configured in the config repo).
-    ctx.ui.setStatus("memory", "🧠 memory: reviewing");
+    const clearMemoryStatus = () => {
+      // Wrap in try/catch — ctx may be stale if session was replaced.
+      try { restoreMemoryStatus(ctx, restoreStatus); } catch {}
+    };
+    ctx.ui.setStatus(MEMORY_STATUS_KEY, REVIEWING_STATUS_TEXT);
 
     let allParts: string[] = [];
     try {
@@ -231,12 +240,12 @@ export function setupBackgroundReview(
       allParts = collectMessageParts(entries);
     } catch {
       reviewInProgress = false;
-      ctx.ui.setStatus("memory", undefined);
+      clearMemoryStatus();
       return;
     }
     if (allParts.length < 4) {
       reviewInProgress = false;
-      ctx.ui.setStatus("memory", undefined);
+      clearMemoryStatus();
       return;
     }
 
@@ -254,16 +263,24 @@ export function setupBackgroundReview(
 
     const finishReview = () => {
       reviewInProgress = false;
-      // Wrap in try/catch — ctx may be stale if session was replaced during review.
-      // Stale ctx would throw "stale after session replacement" error.
-      try { ctx.ui.setStatus("memory", undefined); } catch {}
+      clearMemoryStatus();
       onReviewSettled?.();
     };
 
-    const notifyIfSaved = (saved: boolean) => {
-      if (saved) {
-        ctx.ui.notify("💾 Memory auto-reviewed and updated", "info");
+    const notifyIfSaved = (saved: boolean, detail?: string) => {
+      if (!saved) return;
+      ctx.ui.notify(detail ? `💾 Memory auto-reviewed: ${detail}` : "💾 Memory auto-reviewed and updated", "info");
+    };
+
+    // Human-readable op counts for the success notification, e.g. "2 added, 1 replaced".
+    const formatOpCounts = (ops?: { action: string }[] | null): string | undefined => {
+      if (!ops || ops.length === 0) return undefined;
+      const parts: string[] = [];
+      for (const [action, label] of [["add", "added"], ["replace", "replaced"], ["remove", "removed"]] as const) {
+        const n = ops.filter(o => o.action === action).length;
+        if (n > 0) parts.push(`${n} ${label}`);
       }
+      return parts.length ? parts.join(", ") : undefined;
     };
 
     // Build a brief summary of what this review extracted (for next review).
@@ -306,7 +323,7 @@ export function setupBackgroundReview(
           if (directResult.ok) {
             consecutiveFailures = 0;
             logMemory(`backgroundReview: direct transport review result: ok=${directResult.ok}, applied=${directResult.appliedCount}`);
-            notifyIfSaved(shouldNotifyDirect(directResult));
+            notifyIfSaved(shouldNotifyDirect(directResult), formatOpCounts(directResult.operations));
             // Capture summary for next review
             lastReviewSummary = buildReviewSummary(directResult);
             return;
@@ -345,12 +362,24 @@ export function setupBackgroundReview(
       if (subprocessResult.code === 0) {
         consecutiveFailures = 0;
         logMemory(`backgroundReview: subprocess review succeeded`);
-        notifyIfSaved(shouldNotifySubprocess(subprocessResult.stdout));
+        // Subprocess stdout carries no op counts — generic message, gated on
+        // something actually being saved.
+        if (shouldNotifySubprocess(subprocessResult.stdout)) notifyIfSaved(true);
         lastReviewSummary = buildReviewSummary(null, subprocessResult.stdout);
       } else {
         consecutiveFailures++;
         const errorMsg = formatSubprocessError(subprocessResult.code, subprocessResult.stdout, subprocessResult.stderr);
         logMemory(`backgroundReview: subprocess review failed (consecutiveFailures=${consecutiveFailures}): ${errorMsg}`, "error");
+        // Surface repeated failures — otherwise a broken review model dies
+        // silently into exponential backoff. Warn once when backoff engages
+        // and again at the 8× cap; the log file carries the full trail.
+        try {
+          if (consecutiveFailures === 1) {
+            ctx.ui.notify("⚠️ Memory review failed — backing off", "warning");
+          } else if (consecutiveFailures === 3) {
+            ctx.ui.notify("⚠️ Memory review failing repeatedly — backoff at max", "warning");
+          }
+        } catch {}
         lastReviewSummary = `Review failed (code=${subprocessResult.code}).`;
       }
     };

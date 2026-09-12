@@ -44,6 +44,10 @@ export interface MemoryConfig {
   reviewRecentMessages?: number;
   /** Enable background learning loop. Default: true */
   reviewEnabled: boolean;
+  /** Show a persistent footer status (entry count + project, overridden
+   * transiently by "reviewing"/"flushing"). Default: true. Disable with
+   * false to only show status while work is actually running. */
+  footerStatus?: boolean;
   /** How background review invokes the LLM. Default: direct */
   reviewTransport?: ReviewTransport;
   /** Flush memories before compaction. Default: true */

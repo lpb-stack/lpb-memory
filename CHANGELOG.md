@@ -9,7 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Background review footer status is now inline instead of a notification line.** The review status was published as `[reviewing]`, and `pi-powerline-footer` treats any `[`-prefixed status text as a *notification* — a standalone line rendered above the editor, excluded from the powerline bar. The status is now plain text (`🧠 memory: reviewing`), so it flows into the footer's `extension_statuses` segment like MCP's status, and the config repo's `powerline.customItems` promotes it to a dedicated powerline cell (`hideWhenMissing` hides it when no review is running).
+- **Background review footer status is now inline instead of a notification line.** The review status was published as `[reviewing]`, and `pi-powerline-footer` treats any `[`-prefixed status text as a *notification* — a standalone line rendered above the editor, excluded from the powerline bar. The status is now plain text (`🧠 memory: reviewing`), so it flows into the footer's `extension_statuses` segment like MCP's status, and the config repo's `powerline.customItems` promotes it to a dedicated powerline cell.
+
+### Added
+
+- **`footerStatus` config flag (default `true`)** — a persistent baseline footer status showing entry count + active project (`🧠 12 memories · devstack`), set at session start and restored after transient `reviewing`/`flushing` overrides. Set `footerStatus: false` to only show the cell while work is actually running.
+- **Session flush is now visible in the footer** — pre-compaction and shutdown flushes set `🧠 memory: flushing` for their duration (they were previously silent).
+- **Review failure warnings** — a broken review path no longer dies silently into exponential backoff: a warning notification fires on the first consecutive failure ("backing off") and again when the backoff hits its 8× cap. The log file carries the full trail.
+- **Detailed success notifications** — direct-transport reviews report what changed: `💾 Memory auto-reviewed: 2 added, 1 replaced` (subprocess reviews keep the generic message; their stdout carries no op counts).
 
 ## [0.9.1] - 2026-07-27
 

@@ -38,6 +38,7 @@ import { registerSessionSearchTool } from "./tools/session-search-tool.js";
 import { registerMemorySearchTool } from "./tools/memory-search-tool.js";
 import { setupBackgroundReview } from "./handlers/background-review.js";
 import { setupSessionFlush } from "./handlers/session-flush.js";
+import { buildFooterStatusText, MEMORY_STATUS_KEY, type StatusCtx } from "./handlers/footer-status.js";
 import { registerInsightsCommand } from "./handlers/insights.js";
 import { triggerConsolidation, registerConsolidateCommand } from "./handlers/auto-consolidate.js";
 import { setupCorrectionDetector } from "./handlers/correction-detector.js";
@@ -220,6 +221,13 @@ export default function (pi: ExtensionAPI) {
     await store.loadFromDisk();
     if (projectStore) await projectStore.loadFromDisk();
 
+    // Persistent baseline footer status (entry count + project). Overridden
+    // transiently by background review / session flush, then restored.
+    // Default on — disable with footerStatus: false.
+    try {
+      ctx.ui.setStatus(MEMORY_STATUS_KEY, buildFooterStatusText(config.footerStatus !== false, store, projectStore, projectName));
+    } catch { /* stale ctx — ignore */ }
+
     if (persistenceInitialized) scheduleSessionBackfill(dbManager, sessionsDir, {
       notify: (message, level) => {
         const ui = (ctx as { ui?: { notify?: (message: string, level?: string) => void } }).ui;
@@ -254,13 +262,17 @@ export default function (pi: ExtensionAPI) {
   registerSkillTool(pi, skillStore);
 
   // ── 5. Setup background learning loop (with tool-call-aware nudge) ──
+  const restoreFooterStatus = (ctx: StatusCtx) => {
+    ctx.ui.setStatus(MEMORY_STATUS_KEY, buildFooterStatusText(config.footerStatus !== false, store, projectStore, projectName));
+  };
   setupBackgroundReview(pi, store, projectStore, getSharedConfig, {
     dbManager,
     projectName: projectName || null,
+    deps: { restoreFooterStatus },
   });
 
   // ── 6. Setup session-end flush ──
-  setupSessionFlush(pi, store, projectStore, getSharedConfig, dbManager, projectName);
+  setupSessionFlush(pi, store, projectStore, getSharedConfig, dbManager, projectName, { restoreFooterStatus });
 
   // ── 7. Setup auto-consolidation (inject consolidator into stores) ──
   store.setConsolidator(async (target, signal) => {

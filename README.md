@@ -122,6 +122,7 @@ Configuration lives in `lpb-memory-config.json` (sourced from `~/.pi/agent/`):
 | `consolidationTimeoutMs` | milliseconds | `300000` (5 min) | Timeout for consolidation |
 | `reviewTimeoutMs` | milliseconds | `300000` (5 min) | Timeout for background review subprocess and direct calls — tune for NPU cold load times |
 | `memoryPolicyStyle` | `"full"`, `"compact"`, `"custom"`, `"none"` | `"full"` | System prompt verbosity (used when `memoryMode` is `policy-only`) |
+| `footerStatus` | `true`, `false` | `true` | Persistent footer status (entry count + project, e.g. `🧠 12 memories · devstack`); overridden transiently by `reviewing`/`flushing`. Disable to only show status while work is running |
 
 ## Development
 

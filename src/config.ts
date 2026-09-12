@@ -49,6 +49,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
   nudgeInterval: DEFAULT_NUDGE_INTERVAL,
   reviewRecentMessages: DEFAULT_REVIEW_RECENT_MESSAGES,
   reviewEnabled: true,
+  footerStatus: true,
   reviewTransport: "subprocess",
   flushOnCompact: true,
   flushOnShutdown: true,
@@ -101,6 +102,7 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): MemoryConfig {
       if (typeof parsed.nudgeInterval === "number") config.nudgeInterval = parsed.nudgeInterval;
       if (isNonNegativeNumber(parsed.reviewRecentMessages)) config.reviewRecentMessages = parsed.reviewRecentMessages;
       if (typeof parsed.reviewEnabled === "boolean") config.reviewEnabled = parsed.reviewEnabled;
+      if (typeof parsed.footerStatus === "boolean") config.footerStatus = parsed.footerStatus;
       if (isReviewTransport(parsed.reviewTransport)) config.reviewTransport = parsed.reviewTransport;
       if (typeof parsed.flushOnCompact === "boolean") config.flushOnCompact = parsed.flushOnCompact;
       if (typeof parsed.flushOnShutdown === "boolean") config.flushOnShutdown = parsed.flushOnShutdown;

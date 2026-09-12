@@ -17,6 +17,7 @@ import { resolveConfig } from "../types.js";
 import { collectMessageParts } from "./message-parts.js";
 import { execChildPrompt } from "./pi-child-process.js";
 import { runDirectMemoryCompletion, usesDirectTransport } from "./review-memory-ops.js";
+import { FLUSHING_STATUS_TEXT, MEMORY_STATUS_KEY, restoreMemoryStatus, type StatusCtx } from "./footer-status.js";
 
 function buildDirectFlushUserPrompt(
   store: MemoryStore,
@@ -55,7 +56,7 @@ export function setupSessionFlush(
   config: ConfigOrProvider<MemoryConfig>,
   dbManager: DatabaseManager | null = null,
   projectName?: string | null,
-  deps: { runDirectMemoryCompletion?: typeof runDirectMemoryCompletion } = {},
+  deps: { runDirectMemoryCompletion?: typeof runDirectMemoryCompletion; restoreFooterStatus?: (ctx: StatusCtx) => void } = {},
 ): void {
   let userTurnCount = 0;
   const runDirect = deps.runDirectMemoryCompletion ?? runDirectMemoryCompletion;
@@ -66,7 +67,7 @@ export function setupSessionFlush(
 
   /** Shared flush logic — builds conversation snapshot and saves memories */
   async function flush(
-    ctx: Pick<ExtensionContext, "sessionManager" | "model" | "modelRegistry">,
+    ctx: Pick<ExtensionContext, "sessionManager" | "model" | "modelRegistry" | "ui">,
     signal?: AbortSignal,
     timeoutMs = 30000,
   ): Promise<void> {
@@ -74,6 +75,23 @@ export function setupSessionFlush(
     if (userTurnCount < cfg.flushMinTurns) return;
 
     logMemory(`sessionFlush: starting (timeout=${timeoutMs}ms, turns=${userTurnCount})`);
+
+    // Transient footer status so the flush is visible (same pattern as
+    // background review); the baseline is restored when the flush settles.
+    try { ctx.ui.setStatus(MEMORY_STATUS_KEY, FLUSHING_STATUS_TEXT); } catch {}
+    try {
+      await doFlush(ctx, signal, timeoutMs);
+    } finally {
+      try { restoreMemoryStatus(ctx, deps.restoreFooterStatus); } catch {}
+    }
+  }
+
+  async function doFlush(
+    ctx: Pick<ExtensionContext, "sessionManager" | "model" | "modelRegistry" | "ui">,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
+  ): Promise<void> {
+    const cfg = resolveConfig(config);
 
     let entries;
     try {

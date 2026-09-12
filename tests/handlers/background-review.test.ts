@@ -23,6 +23,7 @@ let handlers: Record<string, Function[]>;
 let execCalls: any[];
 let directCalls: any[];
 let notifyCalls: any[];
+let statusCalls: any[];
 
 // The turn_end handler intentionally does not await its review work
 // (fire-and-forget, so background review never blocks interactive chat —
@@ -93,7 +94,9 @@ function makeCtx(branch: any[] = [], overrides: Record<string, any> = {}) {
       notify: (msg: string, level: string) => {
         notifyCalls.push({ msg, level });
       },
-      setStatus: () => {},
+      setStatus: (key: string, text: string | undefined) => {
+        statusCalls.push({ key, text });
+      },
     },
     ...overrides,
   };
@@ -182,6 +185,7 @@ describe("setupBackgroundReview", () => {
     execCalls = [];
     directCalls = [];
     notifyCalls = [];
+    statusCalls = [];
     resetReviewSettledSignal();
   });
 
@@ -857,5 +861,95 @@ describe("setupBackgroundReview", () => {
 
     // Should not throw — we got here = test passed
     assert.ok(true, "no crash when getBranch throws");
+  });
+
+  it("sets reviewing status during review and restores baseline after settlement", async () => {
+    const pi = createMockPi();
+    const restoreCalls: any[] = [];
+    setup(pi, defaultConfig, {
+      restoreFooterStatus: (ctx: any) => restoreCalls.push(ctx),
+    });
+
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    for (let i = 0; i < 10; i++) {
+      fireTurnEnd();
+    }
+    await reviewSettledSignal.promise;
+
+    const reviewing = statusCalls.find(c => c.key === "memory" && c.text === "🧠 memory: reviewing");
+    assert.ok(reviewing, "reviewing status should be set during review");
+    assert.strictEqual(restoreCalls.length, 1, "baseline restore should be called once after review settles");
+    // Restore wins over a plain clear — no clear call after the restore
+    const last = statusCalls[statusCalls.length - 1];
+    assert.notStrictEqual(last.text, undefined, "last status call should not be a bare clear");
+  });
+
+  it("falls back to clearing the status when no restorer is provided", async () => {
+    const pi = createMockPi();
+    setup(pi, defaultConfig); // no restoreFooterStatus
+
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    for (let i = 0; i < 10; i++) {
+      fireTurnEnd();
+    }
+    await reviewSettledSignal.promise;
+
+    assert.ok(statusCalls.some(c => c.key === "memory" && c.text === "🧠 memory: reviewing"));
+    const last = statusCalls[statusCalls.length - 1];
+    assert.strictEqual(last.text, undefined, "status should be cleared when no restorer is provided");
+  });
+
+  it("notifies warnings on the first review failure and at the 8x backoff cap", async () => {
+    const pi = createMockPi({ code: 1, stdout: "", stderr: "boom" });
+    setup(pi, defaultConfig);
+
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+
+    // Three consecutive failing review cycles. Exponential backoff raises the
+    // turn threshold after each failure (10 → 20 → 40), so each cycle must
+    // fire that many turn_end events.
+    for (const turns of [10, 20, 40]) {
+      resetReviewSettledSignal();
+      for (let i = 0; i < turns; i++) {
+        fireTurnEnd();
+      }
+      await reviewSettledSignal.promise;
+    }
+
+    const warnings = notifyCalls.filter(n => n.level === "warning" && n.msg.includes("Memory review"));
+    assert.strictEqual(warnings.length, 2, "warning at first failure and at the 8x cap");
+    assert.ok(warnings[0].msg.includes("backing off"));
+    assert.ok(warnings[1].msg.includes("backoff at max"));
+  });
+
+  it("direct review success notification includes op counts", async () => {
+    const pi = createMockPi();
+    setupWithDirectDeps(pi, {
+      ok: true,
+      appliedCount: 3,
+      operations: [
+        { action: "add", target: "memory", content: "a" },
+        { action: "add", target: "memory", content: "b" },
+        { action: "remove", target: "memory", content: "c" },
+      ],
+    });
+
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    for (let i = 0; i < 10; i++) {
+      fireTurnEnd();
+    }
+    await reviewSettledSignal.promise;
+
+    const reviewNotify = notifyCalls.find(n => n.msg.includes("Memory auto-reviewed"));
+    assert.ok(reviewNotify, "should notify on direct review with operations");
+    assert.ok(reviewNotify.msg.includes("2 added, 1 removed"), `expected op counts in: ${reviewNotify.msg}`);
   });
 });
